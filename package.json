@@ -7,6 +7,7 @@
     "ingest": "node scripts/ingest.js"
   },
   "dependencies": {
+    "@hono/node-server": "^1.19.12",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@supabase/supabase-js": "^2.43.0",
     "dotenv": "^16.4.5",

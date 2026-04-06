@@ -234,28 +234,13 @@ app.post('/mcp', async (req, res) => {
   const auth = req.headers.authorization;
   try {
     const client = resolveClient(auth);
-    const sessionId = req.headers['mcp-session-id'];
 
-    let transport = transports[sessionId];
+    const mcpServer = buildServer(client);
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // ✅ stateless mode
+    });
 
-    if (!transport) {
-      // New session
-      transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-      });
-
-      transport.onclose = () => {
-        delete transports[transport.sessionId];
-        console.log(`[MCP] Disconnected: ${client.name}`);
-      };
-
-      const mcpServer = buildServer(client);
-      await mcpServer.connect(transport);
-
-      transports[transport.sessionId] = transport;
-      console.log(`[MCP] New session: ${transport.sessionId} for ${client.name}`);
-    }
-
+    await mcpServer.connect(transport);
     await transport.handleRequest(req, res, req.body);
 
   } catch (err) {

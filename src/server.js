@@ -21,6 +21,8 @@ import { z }                 from 'zod';
 import { createClient }      from '@supabase/supabase-js';
 import OpenAI                from 'openai';
 
+
+
 // ── Clients ───────────────────────────────────────────────────────────────────
 
 const supabase = createClient(
@@ -219,6 +221,7 @@ function buildServer(client) {
 
 const app = express();
 app.use(express.json());
+const transports = {};
 
 // Health check — Render needs this to know the service is alive.
 // UptimeRobot pings this every 5 min to prevent Render free tier sleep.
@@ -226,13 +229,20 @@ app.get('/health', (_, res) => {
   res.json({ ok: true, service: 'sofitech-mcp', ts: new Date().toISOString() });
 });
 
-// MCP SSE connection — Claude connects here
 app.get('/mcp', async (req, res) => {
   const auth = req.headers.authorization;
   try {
     const client    = resolveClient(auth);
     const mcpServer = buildServer(client);
     const transport = new SSEServerTransport('/mcp/message', res);
+
+    transports[transport.sessionId] = transport;
+
+    transport.onclose = () => {
+      delete transports[transport.sessionId];
+      console.log(`[${new Date().toISOString()}] Disconnected: ${client.name}`);
+    };
+
     await mcpServer.connect(transport);
     console.log(`[${new Date().toISOString()}] Connected: ${client.name}`);
   } catch (err) {
@@ -241,8 +251,16 @@ app.get('/mcp', async (req, res) => {
   }
 });
 
-// MCP message endpoint
-app.post('/mcp/message', (req, res) => res.status(200).end());
+app.post('/mcp/message', async (req, res) => {
+  const sessionId = req.query.sessionId;
+  const transport = transports[sessionId];
+
+  if (!transport) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  await transport.handlePostMessage(req, res);
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

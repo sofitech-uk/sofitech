@@ -234,29 +234,38 @@ app.post('/mcp', async (req, res) => {
   const auth = req.headers.authorization;
   try {
     const client = resolveClient(auth);
-    const mcpServer = buildServer(client);
+    const sessionId = req.headers['mcp-session-id'];
 
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: randomUUID,
-    });
+    let transport = transports[sessionId];
 
-    await mcpServer.connect(transport);
+    if (!transport) {
+      // New session
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+      });
+
+      transport.onclose = () => {
+        delete transports[transport.sessionId];
+        console.log(`[MCP] Disconnected: ${client.name}`);
+      };
+
+      const mcpServer = buildServer(client);
+      await mcpServer.connect(transport);
+
+      transports[transport.sessionId] = transport;
+      console.log(`[MCP] New session: ${transport.sessionId} for ${client.name}`);
+    }
+
     await transport.handleRequest(req, res, req.body);
 
-    console.log(`[MCP] Connected: ${client.name}`);
   } catch (err) {
     console.error('[MCP] Error:', err.message);
     if (!res.headersSent) res.status(401).json({ error: err.message });
   }
 });
 
-app.get('/mcp', async (req, res) => {
-  res.status(405).json({ error: 'Use POST /mcp' });
-});
-
-app.delete('/mcp', async (req, res) => {
-  res.status(200).end();
-});
+app.get('/mcp', (req, res) => res.status(405).json({ error: 'Use POST /mcp' }));
+app.delete('/mcp', (req, res) => res.status(200).end());
 
 app.post('/mcp/message', async (req, res) => {
   console.log('[MCP] POST /mcp/message sessionId:', req.query.sessionId);

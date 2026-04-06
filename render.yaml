@@ -1,0 +1,22 @@
+# render.yaml
+# Deploy to Render with one click.
+# Connect your GitHub repo at render.com → New → Web Service → select this repo.
+
+services:
+  - type: web
+    name: sofitech-mcp
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false        # fill in on Render dashboard
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CLIENT_TOKEN_NAWSHAD
+        sync: false        # generate with: node -e "console.log('sft_'+require('crypto').randomBytes(24).toString('hex'))"

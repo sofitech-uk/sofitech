@@ -234,12 +234,9 @@ app.get('/mcp', async (req, res) => {
   try {
     const client = resolveClient(auth);
 
-    // ✅ Set headers BEFORE creating the transport
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
+    // ✅ Only set these — do NOT call res.flushHeaders()
+    res.setHeader('X-Accel-Buffering', 'no');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no'); // critical for Render/nginx
-    res.flushHeaders(); // ✅ flush immediately so stream stays open
 
     const mcpServer = buildServer(client);
     const transport = new SSEServerTransport('/mcp/message', res);

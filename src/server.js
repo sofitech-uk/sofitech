@@ -16,10 +16,11 @@
 import 'dotenv/config';
 import express               from 'express';
 import { McpServer }         from '@modelcontextprotocol/sdk/server/mcp.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z }                 from 'zod';
 import { createClient }      from '@supabase/supabase-js';
 import OpenAI                from 'openai';
+import { randomUUID } from 'crypto';
 
 
 
@@ -229,33 +230,32 @@ app.get('/health', (_, res) => {
   res.json({ ok: true, service: 'sofitech-mcp', ts: new Date().toISOString() });
 });
 
-app.get('/mcp', async (req, res) => {
+app.post('/mcp', async (req, res) => {
   const auth = req.headers.authorization;
   try {
     const client = resolveClient(auth);
-
-    // ✅ Only set these — do NOT call res.flushHeaders()
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.setHeader('Connection', 'keep-alive');
-
     const mcpServer = buildServer(client);
-    const transport = new SSEServerTransport('/mcp/message', res);
 
-    console.log('[MCP] New session:', transport.sessionId);
-    transports[transport.sessionId] = transport;
-
-    transport.onclose = () => {
-      delete transports[transport.sessionId];
-      console.log(`[MCP] Disconnected: ${client.name}`);
-    };
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: randomUUID,
+    });
 
     await mcpServer.connect(transport);
-    console.log(`[MCP] Connected: ${client.name}`);
+    await transport.handleRequest(req, res, req.body);
 
+    console.log(`[MCP] Connected: ${client.name}`);
   } catch (err) {
     console.error('[MCP] Error:', err.message);
     if (!res.headersSent) res.status(401).json({ error: err.message });
   }
+});
+
+app.get('/mcp', async (req, res) => {
+  res.status(405).json({ error: 'Use POST /mcp' });
+});
+
+app.delete('/mcp', async (req, res) => {
+  res.status(200).end();
 });
 
 app.post('/mcp/message', async (req, res) => {

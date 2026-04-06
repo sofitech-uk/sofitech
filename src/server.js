@@ -232,25 +232,32 @@ app.get('/health', (_, res) => {
 app.get('/mcp', async (req, res) => {
   const auth = req.headers.authorization;
   try {
-    const client    = resolveClient(auth);
+    const client = resolveClient(auth);
+
+    // ✅ Set headers BEFORE creating the transport
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // critical for Render/nginx
+    res.flushHeaders(); // ✅ flush immediately so stream stays open
+
     const mcpServer = buildServer(client);
     const transport = new SSEServerTransport('/mcp/message', res);
 
     console.log('[MCP] New session:', transport.sessionId);
     transports[transport.sessionId] = transport;
 
-    transports[transport.sessionId] = transport;
-
     transport.onclose = () => {
       delete transports[transport.sessionId];
-      console.log(`[${new Date().toISOString()}] Disconnected: ${client.name}`);
+      console.log(`[MCP] Disconnected: ${client.name}`);
     };
 
     await mcpServer.connect(transport);
-    console.log(`[${new Date().toISOString()}] Connected: ${client.name}`);
+    console.log(`[MCP] Connected: ${client.name}`);
+
   } catch (err) {
-    console.error('[MCP] Auth error:', err.message);
-    res.status(401).json({ error: err.message });
+    console.error('[MCP] Error:', err.message);
+    if (!res.headersSent) res.status(401).json({ error: err.message });
   }
 });
 

@@ -262,6 +262,8 @@ app.get('/mcp', async (req, res) => {
 });
 
 app.post('/mcp/message', async (req, res) => {
+  console.log('[MCP] POST /mcp/message sessionId:', req.query.sessionId);
+  console.log('[MCP] Active sessions:', Object.keys(transports));
   const sessionId = req.query.sessionId;
   const transport = transports[sessionId];
 

@@ -236,6 +236,9 @@ app.get('/mcp', async (req, res) => {
     const mcpServer = buildServer(client);
     const transport = new SSEServerTransport('/mcp/message', res);
 
+    console.log('[MCP] New session:', transport.sessionId);
+    transports[transport.sessionId] = transport;
+
     transports[transport.sessionId] = transport;
 
     transport.onclose = () => {
@@ -256,10 +259,16 @@ app.post('/mcp/message', async (req, res) => {
   const transport = transports[sessionId];
 
   if (!transport) {
+    console.error('[MCP] No transport found for sessionId:', sessionId);
     return res.status(404).json({ error: 'Session not found' });
   }
 
-  await transport.handlePostMessage(req, res);
+  try {
+    await transport.handlePostMessage(req, res);
+  } catch (err) {
+    console.error('[MCP] handlePostMessage error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 const PORT = process.env.PORT || 3000;

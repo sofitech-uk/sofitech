@@ -319,6 +319,81 @@ function buildServer(client) {
     }
   );
 
+server.tool(
+    'search_listings',
+    {
+      query: z.string().describe('What are you looking for? e.g. "3 bed houses in Battersea under 600k"'),
+      limit: z.number().int().min(1).max(10).default(5)
+    },
+    async ({ query, limit }) => {
+      const vector = await embed(query);
+
+      const { data, error } = await supabase.rpc('match_listings', {
+        query_embedding: vector,
+        client_id_filter: cid,
+        match_count: limit
+      });
+
+      if (error) throw new Error('Search failed: ' + error.message);
+
+      await log(cid, 'search_listings', query, `${data?.length || 0} results`);
+
+      if (!data || data.length === 0) {
+        return { content: [{ type: 'text', text: `No listings found for: "${query}"` }] };
+      }
+
+      const results = data.map((l, i) => 
+        `[${i+1}] ${l.property_type} • ${l.bedrooms} bed • £${l.price.toLocaleString()} • ${l.area}\n` +
+        `${l.description?.substring(0, 280)}...\n`
+      ).join('\n\n');
+
+      return { 
+        content: [{ 
+          type: 'text', 
+          text: `Found ${data.length} matching listings:\n\n${results}` 
+        }] 
+      };
+    }
+  );
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // NEW TOOL: get_listing_details
+  // Get full details of a specific listing by ID
+  // ─────────────────────────────────────────────────────────────────────────
+  server.tool(
+    'get_listing_details',
+    {
+      listing_id: z.string().describe('Listing ID, e.g. L001')
+    },
+    async ({ listing_id }) => {
+      const { data, error } = await supabase
+        .from('listings')
+        .select('*')
+        .eq('client_id', cid)
+        .eq('listing_id', listing_id)
+        .single();
+
+      if (error || !data) {
+        return { content: [{ type: 'text', text: `Listing ${listing_id} not found.` }] };
+      }
+
+      await log(cid, 'get_listing_details', listing_id, data.area);
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Listing ${listing_id}\n\n` +
+                `Type: ${data.property_type}\n` +
+                `Price: £${data.price.toLocaleString()} (${data.price_type})\n` +
+                `Bedrooms: ${data.bedrooms} | Bathrooms: ${data.bathrooms}\n` +
+                `Area: ${data.area} (${data.postcode})\n\n` +
+                `Description:\n${data.description}`
+        }]
+      };
+    }
+  );
+
+
   return server;
 }
 

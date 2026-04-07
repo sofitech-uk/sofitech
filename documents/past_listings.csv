@@ -1,0 +1,11 @@
+listing_id,property_type,price,price_type,bedrooms,bathrooms,postcode,area,description,listing_date,status
+L001,Flat,425000,Sale,2,1,SW11 1AA,Battersea,"Modern 2-bed flat in popular Battersea location with balcony and concierge. Close to Clapham Junction station.",2024-01-15, Sold
+L002,House,875000,Sale,3,2,SW18 2BB,Wandsworth,"Victorian 3-bed terraced house with garden and period features. Excellent condition.",2024-02-03, Sold
+L003,Flat,1650 pcm,Rent,1,1,E14 9CC,Canary Wharf,"Furnished 1-bed apartment in prestigious riverside development. 24hr concierge.",2024-03-10, Let
+L004,Terraced House,650000,Sale,3,1,SE15 4DD,Peckham,"Beautifully renovated 3-bed house with large kitchen-diner and private garden.",2024-01-28, Sold
+L005,Studio,1250 pcm,Rent,0,1,WC1X 9EE,Kings Cross,"Compact studio apartment moments from Kings Cross station. Ideal for young professionals.",2024-04-05, Let
+L006,Semi-detached,1125000,Sale,4,3,SW19 5FF,Wimbledon,"Spacious 4-bed family home with driveway and south-facing garden.",2024-02-20, Sold
+L007,Flat,2100 pcm,Rent,2,2,N1 0GG,Islington,"Stunning 2-bed period conversion flat in heart of Islington. High ceilings.",2024-03-22, Let
+L008,House,495000,Sale,2,1,SE22 8HH,East Dulwich,"Charming 2-bed Victorian cottage with courtyard garden.",2024-01-10, Sold
+L009,Flat,1800 pcm,Rent,1,1,SW6 7JJ,Fulham,"Bright 1-bed flat in quiet residential street. Newly refurbished.",2024-04-12, Let
+L010,Maisonette,725000,Sale,3,2,SE23 3KK,Forest Hill,"Large 3-bed split-level maisonette with private roof terrace.",2024-02-15, Under Offer

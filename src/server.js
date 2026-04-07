@@ -215,6 +215,140 @@ function buildServer(client) {
     }
   );
 
+  server.tool(
+    'add_tenant',
+    {
+      full_name:    z.string(),
+      email:        z.string().optional(),
+      phone:        z.string().optional(),
+      property:     z.string(),
+      rent:         z.number().optional(),
+      deposit_held: z.number().optional(),
+      start_date:   z.string().optional(),
+      end_date:     z.string().optional(),
+      notes:        z.string().optional(),
+    },
+    async (params) => {
+      const { data, error } = await supabase
+        .from('tenants')
+        .insert({ client_id: cid, ...params })
+        .select()
+        .single();
+
+      if (error) throw new Error('Failed to add tenant: ' + error.message);
+      await log(cid, 'add_tenant', params.full_name, `Added at ${params.property}`);
+
+      return { content: [{ type: 'text', text: `Tenant ${data.full_name} added. ID: ${data.id}` }] };
+    }
+  );
+
+  server.tool(
+    'generate_checkout_report',
+    {
+      tenant_name:    z.string().describe('Tenant full name'),
+      checkout_date:  z.string().describe('Date of checkout e.g. 2026-05-01'),
+      walls:          z.enum(['good','fair','poor']).optional(),
+      floors:         z.enum(['good','fair','poor']).optional(),
+      windows:        z.enum(['good','fair','poor']).optional(),
+      doors:          z.enum(['good','fair','poor']).optional(),
+      kitchen:        z.enum(['good','fair','poor']).optional(),
+      bathroom:       z.enum(['good','fair','poor']).optional(),
+      garden:         z.enum(['good','fair','poor']).optional(),
+      deposit_held:   z.number().optional(),
+      deductions:     z.number().optional(),
+      deduction_notes: z.string().optional(),
+      meter_readings: z.object({
+        gas:      z.string().optional(),
+        electric: z.string().optional(),
+        water:    z.string().optional(),
+      }).optional(),
+      general_notes:  z.string().optional(),
+    },
+    async (params) => {
+      // Look up tenant
+      const { data: tenant } = await supabase
+        .from('tenants')
+        .select('*')
+        .eq('client_id', cid)
+        .ilike('full_name', `%${params.tenant_name}%`)
+        .single();
+
+      if (!tenant) {
+        return { content: [{ type: 'text', text: `Tenant "${params.tenant_name}" not found.` }] };
+      }
+
+      // Save report
+      const { data: report, error } = await supabase
+        .from('checkout_reports')
+        .insert({
+          client_id:       cid,
+          tenant_id:       tenant.id,
+          property:        tenant.property,
+          checkout_date:   params.checkout_date,
+          walls:           params.walls,
+          floors:          params.floors,
+          windows:         params.windows,
+          doors:           params.doors,
+          kitchen:         params.kitchen,
+          bathroom:        params.bathroom,
+          garden:          params.garden,
+          deposit_held:    params.deposit_held,
+          deductions:      params.deductions || 0,
+          deduction_notes: params.deduction_notes,
+          meter_readings:  params.meter_readings,
+          general_notes:   params.general_notes,
+          status:          'draft'
+        })
+        .select()
+        .single();
+
+      if (error) throw new Error('Failed to save report: ' + error.message);
+
+      await log(cid, 'generate_checkout_report', tenant.full_name, `Report created for ${tenant.property}`);
+
+      const depositReturn = (params.deposit_held || 0) - (params.deductions || 0);
+
+    const summary = `
+    CHECKOUT REPORT — ${tenant.property}
+    =====================================
+    Tenant:        ${tenant.full_name}
+    Checkout date: ${params.checkout_date}
+
+    CONDITION
+    ---------
+    Walls:    ${params.walls || 'not assessed'}
+    Floors:   ${params.floors || 'not assessed'}
+    Windows:  ${params.windows || 'not assessed'}
+    Doors:    ${params.doors || 'not assessed'}
+    Kitchen:  ${params.kitchen || 'not assessed'}
+    Bathroom: ${params.bathroom || 'not assessed'}
+    Garden:   ${params.garden || 'not assessed'}
+
+    FINANCIALS
+    ----------
+    Deposit held:   £${params.deposit_held || 0}
+    Deductions:     £${params.deductions || 0}
+    ${params.deduction_notes ? `Reason:         ${params.deduction_notes}` : ''}
+    Deposit return: £${depositReturn}
+
+    METER READINGS
+    --------------
+    Gas:      ${params.meter_readings?.gas || 'not provided'}
+    Electric: ${params.meter_readings?.electric || 'not provided'}
+    Water:    ${params.meter_readings?.water || 'not provided'}
+
+    NOTES
+    -----
+    ${params.general_notes || 'None'}
+
+    Status: DRAFT — use finalise_checkout_report to lock this report.
+    Report ID: ${report.id}
+      `.trim();
+
+      return { content: [{ type: 'text', text: summary }] };
+    }
+  );
+
   return server;
 }
 

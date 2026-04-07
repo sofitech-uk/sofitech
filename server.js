@@ -356,6 +356,7 @@ server.tool(
     }
   );
 
+  
   // ─────────────────────────────────────────────────────────────────────────
   // NEW TOOL: get_listing_details
   // Get full details of a specific listing by ID

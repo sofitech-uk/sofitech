@@ -311,6 +311,85 @@ server.tool(
   }
 );
 
+// TOOL 10: filter_listings
+server.registerTool(
+  'filter_listings',
+  {
+    description: 'Filter listings by price, type, bedrooms or status',
+    inputSchema: {
+      price_type:  z.enum(['sale', 'rent']).optional(),
+      min_price:   z.number().optional().describe('Minimum price in GBP'),
+      max_price:   z.number().optional().describe('Maximum price in GBP'),
+      bedrooms:    z.number().int().optional(),
+      status:      z.string().optional().describe('e.g. available, under offer, sold, let'),
+      limit:       z.number().int().min(1).max(50).default(20)
+    }
+  },
+  async ({ price_type, min_price, max_price, bedrooms, status, limit }) => {
+    let query = supabase
+      .from('listings')
+      .select('listing_id, address, postcode, property_type, bedrooms, price, price_type, status, area')
+      .eq('client_id', cid)
+      .order('price', { ascending: true })
+      .limit(limit);
+
+    if (price_type)      query = query.eq('price_type', price_type);
+    if (min_price)       query = query.gte('price', min_price);
+    if (max_price)       query = query.lte('price', max_price);
+    if (bedrooms)        query = query.eq('bedrooms', bedrooms);
+    if (status)          query = query.eq('status', status);
+
+    const { data, error } = await query;
+    if (error) throw new Error('Filter failed: ' + error.message);
+
+    if (!data?.length) {
+      return { content: [{ type: 'text', text: 'No listings match those criteria.' }] };
+    }
+
+    const list = data.map(l =>
+      `• [${l.listing_id}] ${l.address}, ${l.postcode} — ${l.property_type}, ${l.bedrooms || '?'} bed — £${l.price?.toLocaleString()}/${price_type === 'rent' ? 'mo' : ''} [${l.status}]`
+    ).join('\n');
+
+    return { content: [{ type: 'text', text: `${data.length} listing(s):\n\n${list}` }] };
+  }
+);
+
+// TOOL 9: list_listings
+server.registerTool(
+  'list_listings',
+  {
+    description: 'List all property listings',
+    inputSchema: {
+      status: z.string().optional().describe('Filter by status e.g. available, under offer, sold, let'),
+      limit:  z.number().int().min(1).max(50).default(20)
+    }
+  },
+  async ({ status, limit }) => {
+    let query = supabase
+      .from('listings')
+      .select('listing_id, address, postcode, property_type, bedrooms, price, price_type, status, area')
+      .eq('client_id', cid)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (status) query = query.eq('status', status);
+
+    const { data, error } = await query;
+
+    if (error) throw new Error('Failed to list listings: ' + error.message);
+    await log(cid, 'list_listings', status || 'all', `${data?.length || 0} listings`);
+
+    if (!data?.length) {
+      return { content: [{ type: 'text', text: 'No listings found.' }] };
+    }
+
+    const list = data.map(l =>
+      `• [${l.listing_id}] ${l.address}, ${l.postcode} — ${l.property_type || 'Property'}, ${l.bedrooms || '?'} bed — £${l.price?.toLocaleString() || '?'} (${l.price_type || '?'}) [${l.status}]`
+    ).join('\n');
+
+    return { content: [{ type: 'text', text: `${data.length} listing(s):\n\n${list}` }] };
+  }
+);
   return server;
 }
 

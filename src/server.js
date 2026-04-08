@@ -1,16 +1,5 @@
 /**
  * sofitech-mcp-demo/src/server.js
- *
- * sofitech MCP Server — Demo (Render free tier compatible)
- *
- * Tools:
- *   search_documents  — semantic search across uploaded PDFs
- *   list_documents    — show what's in the library
- *   summarise_document — get a summary of a specific file
- *   ask_document      — ask a specific question about a named file
- *
- * Auth: Bearer token in Authorization header
- * Transport: HTTP + SSE (works as remote MCP with Claude.ai)
  */
 
 import 'dotenv/config';
@@ -20,9 +9,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z }                 from 'zod';
 import { createClient }      from '@supabase/supabase-js';
 import OpenAI                from 'openai';
-import { randomUUID } from 'crypto';
-
-
+import { randomUUID }        from 'crypto';
 
 // ── Clients ───────────────────────────────────────────────────────────────────
 
@@ -34,14 +21,10 @@ const supabase = createClient(
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-// Tokens are stored as env vars: CLIENT_TOKEN_<NAME>=sft_xxx
-// resolveClient returns { id: 'nawshad', name: 'Nawshad' }
 
 function resolveClient(authHeader) {
   const token = authHeader?.replace('Bearer ', '').trim();
   if (!token) throw new Error('Missing Authorization header');
-
-  // Find which env var matches this token
   for (const [key, val] of Object.entries(process.env)) {
     if (key.startsWith('CLIENT_TOKEN_') && val === token) {
       const id = key.replace('CLIENT_TOKEN_', '').toLowerCase();
@@ -67,33 +50,42 @@ async function log(clientId, tool, query, summary) {
   });
 }
 
+// ── Condition scoring helper ──────────────────────────────────────────────────
+
+const CONDITION_SCORE = { excellent: 4, good: 3, fair: 2, poor: 1 };
+
+function overallCondition(rooms) {
+  if (!rooms.length) return 'fair';
+  const avg = rooms.reduce((s, r) => s + (CONDITION_SCORE[r.condition] ?? 2), 0) / rooms.length;
+  return avg >= 3.5 ? 'excellent' : avg >= 2.5 ? 'good' : avg >= 1.5 ? 'fair' : 'poor';
+}
+
 // ── MCP Server builder ────────────────────────────────────────────────────────
 
 function buildServer(client) {
-  const server = new McpServer({ name: 'sofitech-docs', version: '1.0.0' });
-  const cid    = client.id;
+  const server = new McpServer({ name: 'sofitech', version: '1.1.0' });
+  const cid = client.id;
 
-  // ─────────────────────────────────────────────────────────────────────────
+  // ==================== ORIGINAL TOOLS ====================
+
   // TOOL 1: search_documents
-  // Semantic search across all PDFs uploaded for this client.
-  // "Find a clause about break options in leases"
-  // ─────────────────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     'search_documents',
     {
-      query:    z.string().describe('What you\'re looking for — use natural language'),
-      doc_type: z.string().optional().describe('Filter by type: precedent, contract, policy, general'),
-      limit:    z.number().int().min(1).max(8).default(4)
+      description: 'Search documents using natural language',
+      inputSchema: {
+        query:    z.string().describe('What you\'re looking for — use natural language'),
+        doc_type: z.string().optional().describe('Filter by type: precedent, contract, policy, general'),
+        limit:    z.number().int().min(1).max(8).default(4)
+      }
     },
     async ({ query, doc_type, limit }) => {
       const vector = await embed(query);
-
       const { data, error } = await supabase.rpc('match_documents', {
         query_embedding:  vector,
         client_id_filter: cid,
-        match_count:      limit + 2   // fetch a few extra then filter
+        match_count:      limit + 2
       });
-
       if (error) throw new Error('Search failed: ' + error.message);
 
       const results = (data || [])
@@ -114,19 +106,19 @@ function buildServer(client) {
     }
   );
 
-  // ─────────────────────────────────────────────────────────────────────────
   // TOOL 2: list_documents
-  // Show everything that's been uploaded for this client.
-  // ─────────────────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     'list_documents',
-    {},
+    {
+      description: 'List all uploaded documents in the library',
+      inputSchema: {}
+    },
     async () => {
       const { data, error } = await supabase
         .from('documents')
         .select('filename, doc_type, created_at')
         .eq('client_id', cid)
-        .eq('chunk_index', 0)       // one row per file (first chunk only)
+        .eq('chunk_index', 0)
         .order('created_at', { ascending: false });
 
       if (error) throw new Error('List failed: ' + error.message);
@@ -144,24 +136,20 @@ function buildServer(client) {
     }
   );
 
-  // ─────────────────────────────────────────────────────────────────────────
   // TOOL 3: ask_document
-  // Retrieve all chunks from a specific file and return them as context.
-  // Claude can then answer questions about that specific document.
-  // ─────────────────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     'ask_document',
     {
-      filename: z.string().describe('Exact filename — get this from list_documents'),
-      question: z.string().describe('Your question about this document')
+      description: 'Ask a question about a specific document',
+      inputSchema: {
+        filename: z.string().describe('Exact filename — get this from list_documents'),
+        question: z.string().describe('Your question about this document')
+      }
     },
     async ({ filename, question }) => {
-      // Get the most relevant chunks from this specific file
-      const vector = await embed(question);
-
       const { data, error } = await supabase
         .from('documents')
-        .select('content, chunk_index, embedding')
+        .select('content, chunk_index')
         .eq('client_id', cid)
         .eq('filename', filename)
         .order('chunk_index', { ascending: true });
@@ -170,15 +158,7 @@ function buildServer(client) {
         return { content: [{ type: 'text', text: `File "${filename}" not found. Use list_documents to see available files.` }] };
       }
 
-      // Rank chunks by similarity to the question
-      const ranked = data
-        .map(chunk => {
-          // Simple dot product similarity (embedding is already stored)
-          return { ...chunk, relevance: chunk.chunk_index };  // use order as fallback
-        })
-        .slice(0, 6);  // top 6 chunks = ~4800 words of context
-
-      const context = ranked.map(c => c.content).join('\n\n');
+      const context = data.slice(0, 6).map(c => c.content).join('\n\n');
       await log(cid, 'ask_document', question, filename);
 
       return {
@@ -190,13 +170,15 @@ function buildServer(client) {
     }
   );
 
-  // ─────────────────────────────────────────────────────────────────────────
   // TOOL 4: get_audit_log
-  // See recent activity — useful to show clients what the AI has been doing.
-  // ─────────────────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     'get_audit_log',
-    { limit: z.number().int().min(1).max(20).default(10) },
+    {
+      description: 'Retrieve recent activity from the audit log',
+      inputSchema: {
+        limit: z.number().int().min(1).max(20).default(10)
+      }
+    },
     async ({ limit }) => {
       const { data, error } = await supabase
         .from('audit_log')
@@ -207,145 +189,147 @@ function buildServer(client) {
 
       if (error) throw new Error('Audit log error: ' + error.message);
 
-      const log_ = (data || []).map(e =>
-        `${e.created_at.split('T')[0]} ${e.created_at.split('T')[1].slice(0,5)}  [${e.tool}]  ${e.query || '—'}  → ${e.result_summary || '—'}`
+      const lines = (data || []).map(e =>
+        `${e.created_at.split('T')[0]} ${e.created_at.split('T')[1].slice(0, 5)}  [${e.tool}]  ${e.query || '—'}  → ${e.result_summary || '—'}`
       ).join('\n');
 
-      return { content: [{ type: 'text', text: `Recent activity:\n\n${log_ || 'No activity yet.'}` }] };
+      return { content: [{ type: 'text', text: `Recent activity:\n\n${lines || 'No activity yet.'}` }] };
     }
   );
 
-  server.tool(
-    'add_tenant',
+  // ==================== LISTING TOOLS ====================
+
+  // TOOL 5: search_listings
+  server.registerTool(
+    'search_listings',
     {
-      full_name:    z.string(),
-      email:        z.string().optional(),
-      phone:        z.string().optional(),
-      property:     z.string(),
-      rent:         z.number().optional(),
-      deposit_held: z.number().optional(),
-      start_date:   z.string().optional(),
-      end_date:     z.string().optional(),
-      notes:        z.string().optional(),
+      description: 'Search property listings using natural language',
+      inputSchema: {
+        query: z.string().describe('What are you looking for? e.g. "3 bed houses in Battersea under 600k"'),
+        limit: z.number().int().min(1).max(10).default(5)
+      }
     },
-    async (params) => {
-      const { data, error } = await supabase
-        .from('tenants')
-        .insert({ client_id: cid, ...params })
-        .select()
-        .single();
+    async ({ query, limit }) => {
+      const vector = await embed(query);
 
-      if (error) throw new Error('Failed to add tenant: ' + error.message);
-      await log(cid, 'add_tenant', params.full_name, `Added at ${params.property}`);
+      const { data, error } = await supabase.rpc('match_listings', {
+        query_embedding:  vector,
+        client_id_filter: cid,
+        match_count:      limit
+      });
 
-      return { content: [{ type: 'text', text: `Tenant ${data.full_name} added. ID: ${data.id}` }] };
-    }
-  );
+      if (error) throw new Error('Search failed: ' + error.message);
 
-  server.tool(
-    'generate_checkout_report',
-    {
-      tenant_name:    z.string().describe('Tenant full name'),
-      checkout_date:  z.string().describe('Date of checkout e.g. 2026-05-01'),
-      walls:          z.enum(['good','fair','poor']).optional(),
-      floors:         z.enum(['good','fair','poor']).optional(),
-      windows:        z.enum(['good','fair','poor']).optional(),
-      doors:          z.enum(['good','fair','poor']).optional(),
-      kitchen:        z.enum(['good','fair','poor']).optional(),
-      bathroom:       z.enum(['good','fair','poor']).optional(),
-      garden:         z.enum(['good','fair','poor']).optional(),
-      deposit_held:   z.number().optional(),
-      deductions:     z.number().optional(),
-      deduction_notes: z.string().optional(),
-      meter_readings: z.object({
-        gas:      z.string().optional(),
-        electric: z.string().optional(),
-        water:    z.string().optional(),
-      }).optional(),
-      general_notes:  z.string().optional(),
-    },
-    async (params) => {
-      // Look up tenant
-      const { data: tenant } = await supabase
-        .from('tenants')
-        .select('*')
-        .eq('client_id', cid)
-        .ilike('full_name', `%${params.tenant_name}%`)
-        .single();
+      await log(cid, 'search_listings', query, `${data?.length || 0} results`);
 
-      if (!tenant) {
-        return { content: [{ type: 'text', text: `Tenant "${params.tenant_name}" not found.` }] };
+      if (!data || data.length === 0) {
+        return { content: [{ type: 'text', text: `No listings found for: "${query}"` }] };
       }
 
-      // Save report
-      const { data: report, error } = await supabase
-        .from('checkout_reports')
-        .insert({
-          client_id:       cid,
-          tenant_id:       tenant.id,
-          property:        tenant.property,
-          checkout_date:   params.checkout_date,
-          walls:           params.walls,
-          floors:          params.floors,
-          windows:         params.windows,
-          doors:           params.doors,
-          kitchen:         params.kitchen,
-          bathroom:        params.bathroom,
-          garden:          params.garden,
-          deposit_held:    params.deposit_held,
-          deductions:      params.deductions || 0,
-          deduction_notes: params.deduction_notes,
-          meter_readings:  params.meter_readings,
-          general_notes:   params.general_notes,
-          status:          'draft'
-        })
-        .select()
+      const results = data.map((l, i) =>
+        `[${i + 1}] ${l.property_type} • ${l.bedrooms} bed • £${l.price.toLocaleString()} • ${l.area}\n` +
+        `${l.description?.substring(0, 280)}...\n`
+      ).join('\n\n');
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Found ${data.length} matching listings:\n\n${results}`
+        }]
+      };
+    }
+  );
+
+  // TOOL 6: get_listing_details
+  server.registerTool(
+    'get_listing_details',
+    {
+      description: 'Get full details for a specific listing by ID',
+      inputSchema: {
+        listing_id: z.string().describe('Listing ID, e.g. L001')
+      }
+    },
+    async ({ listing_id }) => {
+      const { data, error } = await supabase
+        .from('listings')
+        .select('*')
+        .eq('client_id', cid)
+        .eq('listing_id', listing_id)
         .single();
 
-      if (error) throw new Error('Failed to save report: ' + error.message);
+      if (error || !data) {
+        return { content: [{ type: 'text', text: `Listing ${listing_id} not found.` }] };
+      }
 
-      await log(cid, 'generate_checkout_report', tenant.full_name, `Report created for ${tenant.property}`);
+      await log(cid, 'get_listing_details', listing_id, data.area);
 
-      const depositReturn = (params.deposit_held || 0) - (params.deductions || 0);
+      return {
+        content: [{
+          type: 'text',
+          text: `Listing ${listing_id}\n\n` +
+                `Type: ${data.property_type}\n` +
+                `Price: £${data.price.toLocaleString()} (${data.price_type})\n` +
+                `Bedrooms: ${data.bedrooms} | Bathrooms: ${data.bathrooms}\n` +
+                `Area: ${data.area} (${data.postcode})\n\n` +
+                `Description:\n${data.description}`
+        }]
+      };
+    }
+  );
 
-    const summary = `
-    CHECKOUT REPORT — ${tenant.property}
-    =====================================
-    Tenant:        ${tenant.full_name}
-    Checkout date: ${params.checkout_date}
+  // TOOL 7: add_listing
+  server.registerTool(
+    'add_listing',
+    {
+      description: 'Add a new property listing',
+      inputSchema: {
+        address:        z.string().describe('Full address of the property'),
+        postcode:       z.string().describe('Postcode e.g. L7 0ED'),
+        area:           z.string().optional().describe('Area or neighbourhood e.g. Liverpool City Centre'),
+        property_type:  z.string().optional().describe('e.g. flat, terraced, semi-detached, detached'),
+        bedrooms:       z.number().int().optional(),
+        bathrooms:      z.number().int().optional(),
+        price:          z.number().optional().describe('Price in GBP'),
+        price_type:     z.enum(['sale', 'rent']).optional(),
+        description:    z.string().optional(),
+        epc_rating:     z.string().optional().describe('e.g. A, B, C, D, E, F, G'),
+        tenure:         z.string().optional().describe('e.g. freehold, leasehold'),
+        floor_area_sqm: z.number().optional(),
+        status:         z.string().optional().describe('e.g. available, under offer, sold, let'),
+      }
+    },
+    async (fields) => {
+      const listing_id = 'L' + randomUUID().slice(0, 6).toUpperCase();
 
-    CONDITION
-    ---------
-    Walls:    ${params.walls || 'not assessed'}
-    Floors:   ${params.floors || 'not assessed'}
-    Windows:  ${params.windows || 'not assessed'}
-    Doors:    ${params.doors || 'not assessed'}
-    Kitchen:  ${params.kitchen || 'not assessed'}
-    Bathroom: ${params.bathroom || 'not assessed'}
-    Garden:   ${params.garden || 'not assessed'}
+      const embeddingText = [
+        fields.address,
+        fields.postcode,
+        fields.area,
+        fields.property_type,
+        fields.bedrooms ? `${fields.bedrooms} bedrooms` : null,
+        fields.description,
+      ].filter(Boolean).join(', ');
 
-    FINANCIALS
-    ----------
-    Deposit held:   £${params.deposit_held || 0}
-    Deductions:     £${params.deductions || 0}
-    ${params.deduction_notes ? `Reason:         ${params.deduction_notes}` : ''}
-    Deposit return: £${depositReturn}
+      const embedding = await embed(embeddingText);
 
-    METER READINGS
-    --------------
-    Gas:      ${params.meter_readings?.gas || 'not provided'}
-    Electric: ${params.meter_readings?.electric || 'not provided'}
-    Water:    ${params.meter_readings?.water || 'not provided'}
+      const { error } = await supabase.from('listings').insert({
+        client_id:    cid,
+        listing_id,
+        listing_date: new Date().toISOString().split('T')[0],
+        status:       fields.status ?? 'available',
+        embedding,
+        ...fields,
+      });
 
-    NOTES
-    -----
-    ${params.general_notes || 'None'}
+      if (error) throw new Error('Failed to add listing: ' + error.message);
+      await log(cid, 'add_listing', fields.address, listing_id);
 
-    Status: DRAFT — use finalise_checkout_report to lock this report.
-    Report ID: ${report.id}
-      `.trim();
-
-      return { content: [{ type: 'text', text: summary }] };
+      return {
+        content: [{
+          type: 'text',
+          text: `Listing added successfully. ID: ${listing_id}\nAddress: ${fields.address}, ${fields.postcode}`
+        }]
+      };
     }
   );
 
@@ -358,8 +342,6 @@ const app = express();
 app.use(express.json());
 const transports = {};
 
-// Health check — Render needs this to know the service is alive.
-// UptimeRobot pings this every 5 min to prevent Render free tier sleep.
 app.get('/health', (_, res) => {
   res.json({ ok: true, service: 'sofitech-mcp', ts: new Date().toISOString() });
 });
@@ -367,40 +349,27 @@ app.get('/health', (_, res) => {
 app.post('/mcp', async (req, res) => {
   const auth = req.headers.authorization;
   try {
-    const client = resolveClient(auth);
-
+    const client    = resolveClient(auth);
     const mcpServer = buildServer(client);
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined, // ✅ stateless mode
-    });
-
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await mcpServer.connect(transport);
     await transport.handleRequest(req, res, req.body);
-
   } catch (err) {
     console.error('[MCP] Error:', err.message);
     if (!res.headersSent) res.status(401).json({ error: err.message });
   }
 });
 
-app.get('/mcp', (req, res) => res.status(405).json({ error: 'Use POST /mcp' }));
-app.delete('/mcp', (req, res) => res.status(200).end());
+app.get('/mcp',    (_, res) => res.status(405).json({ error: 'Use POST /mcp' }));
+app.delete('/mcp', (_, res) => res.status(200).end());
 
 app.post('/mcp/message', async (req, res) => {
-  console.log('[MCP] POST /mcp/message sessionId:', req.query.sessionId);
-  console.log('[MCP] Active sessions:', Object.keys(transports));
   const sessionId = req.query.sessionId;
   const transport = transports[sessionId];
-
-  if (!transport) {
-    console.error('[MCP] No transport found for sessionId:', sessionId);
-    return res.status(404).json({ error: 'Session not found' });
-  }
-
+  if (!transport) return res.status(404).json({ error: 'Session not found' });
   try {
     await transport.handlePostMessage(req, res);
   } catch (err) {
-    console.error('[MCP] handlePostMessage error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

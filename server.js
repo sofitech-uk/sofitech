@@ -257,6 +257,60 @@ function buildServer(client) {
     }
   );
 
+  // TOOL 7: add_listing
+server.tool(
+  'add_listing',
+  {
+    address:        z.string().describe('Full address of the property'),
+    postcode:       z.string().describe('Postcode e.g. L7 0ED'),
+    area:           z.string().optional().describe('Area or neighbourhood e.g. Liverpool City Centre'),
+    property_type:  z.string().optional().describe('e.g. flat, terraced, semi-detached, detached'),
+    bedrooms:       z.number().int().optional(),
+    bathrooms:      z.number().int().optional(),
+    price:          z.number().optional().describe('Price in GBP'),
+    price_type:     z.enum(['sale', 'rent']).optional(),
+    description:    z.string().optional(),
+    epc_rating:     z.string().optional().describe('e.g. A, B, C, D, E, F, G'),
+    tenure:         z.string().optional().describe('e.g. freehold, leasehold'),
+    floor_area_sqm: z.number().optional(),
+    status:         z.string().optional().describe('e.g. available, under offer, sold, let'),
+  },
+  async (fields) => {
+    const listing_id = 'L' + randomUUID().slice(0, 6).toUpperCase();
+
+    // Build embedding text from key fields
+    const embeddingText = [
+      fields.address,
+      fields.postcode,
+      fields.area,
+      fields.property_type,
+      fields.bedrooms ? `${fields.bedrooms} bedrooms` : null,
+      fields.description,
+    ].filter(Boolean).join(', ');
+
+    const embedding = await embed(embeddingText);
+
+    const { error } = await supabase.from('listings').insert({
+      client_id:      cid,
+      listing_id,
+      listing_date:   new Date().toISOString().split('T')[0],
+      status:         fields.status ?? 'available',
+      embedding,
+      ...fields,
+    });
+
+    if (error) throw new Error('Failed to add listing: ' + error.message);
+    await log(cid, 'add_listing', fields.address, listing_id);
+
+    return {
+      content: [{
+        type: 'text',
+        text: `Listing added successfully. ID: ${listing_id}\nAddress: ${fields.address}, ${fields.postcode}`
+      }]
+    };
+  }
+);
+
   return server;
 }
 
